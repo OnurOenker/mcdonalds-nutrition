@@ -1,0 +1,335 @@
+---
+title: "McDonald's Menu - EDA "
+output: 
+  rmdformats::downcute:
+    use_bookdown: TRUE 
+    lightbox: TRUE
+    gallery: TRUE
+    fig_caption: TRUE
+    code_folding: hide
+---
+```{r, include = FALSE }
+knitr::opts_chunk$set(
+  echo = TRUE, warning = FALSE
+)
+```
+
+
+# Introduction
+
+
+Exploratory data analysis conducted on a data set  published on Kaggle - a complete nutritional values for [McDonalds's US Menu](https://www.kaggle.com/mcdonalds/nutrition-facts). 
+
+There are three main sections:
+- Preliminary data transformation and cleaning.
+- Exploring distribution of calories across different menu items, food categories and serving sizes.
+- Exploring distribution of nutritional values across different food categories and serving sizes.
+
+
+## To-Do:
+
+
+- [Average daily caloric needs for adult (sedentary, moderately active, active lifestyle)](http://www.webmd.com/diet/features/estimated-calorie-requirement) vs calories in McDonald's' food.
+- [Average daily caloric needs for kids](http://www.webmd.com/diet/features/estimated-calorie-requirement) vs calories in McDonald's Kids menu
+- High level of [cholesterol](https://www.nhlbi.nih.gov/health/health-topics/topics/hbc) and [sodium](https://www.hsph.harvard.edu/nutritionsource/salt-and-sodium/sodium-health-risks-and-disease/) can be associated with increased risk in cardiovascular problems. Explore content of daily average % of cholesterol and sodium in McDonald's menu versus other nutrition.
+- [Donut chart](http://stackoverflow.com/questions/13615562/ggplot-donut-chart) of average daily % of each nutrition in McDonald's menu
+
+
+# Section 1: Preliminary data transformation and cleaning
+
+
+Lets begin with loading packages, data, and doing some baseline change is column names to a more readable format.
+
+```{r loadlib, echo=T, results='hide', message=F, warnings=F}
+library(ggplot2) # Data visualization
+library(readr) # CSV file I/O, e.g. the read_csv function
+library(tidyverse) # lots of useful packages for transformation
+library(ggthemes) # extra themes for ggplot2
+library(stringr) # for pattern matching
+library(repr)
+library(plotly)
+menu = read.csv("menu.csv", header=T) # Load the data
+new_names <- gsub(pattern = "*....Daily.Value.", replacement=".DV", names(menu))
+names(menu) <- new_names
+
+```
+
+We want to look at the relationships between serving size and various nutritional values, but serving size is currently recorded in a very unfriendly manner, mixing ounces and grams in a single columns. Serving size variable is encoded as a factor in McDonald's data set. We convert it into a single numeric variable represented by grams (for solid food - food.g), and milliliters (for drinks - drinks.ml).
+
+```{r}
+#drinks - select only fields that contain "fl oz" string and sperately 'carton' string
+drinks.oz <- menu[str_detect(menu$Serving.Size, " fl oz.*"),]
+drinks.ml <- menu[str_detect(menu$Serving.Size, 'carton'),]
+
+#drinks - keep the numbers and convert ounces to mililiters (1 oz = 29.5735 ml)
+#round the values to zero decimal places 
+drinks.oz$Serving.Size <- 
+  round(as.numeric(gsub(" fl oz.*", "", drinks.oz$Serving.Size))*29.5735,0)
+drinks.ml$Serving.Size <- 
+  round(as.numeric(gsub(".*\\((.*)\\ ml).*", "\\1", drinks.ml$Serving.Size)),0)
+
+#food - select only fields that contain "g" string
+#keep the numbers and round the values to zero decimal places
+food.g <- menu[str_detect(menu$Serving.Size, 'g'),] 
+food.g$Serving.Size <- 
+  round(as.numeric(gsub(".*\\((.*)\\ g).*", "\\1", food.g$Serving.Size)),0)
+
+#combine all those data frames by rows into new data frame
+#create new column with Type of Item as either 'drink' or 'food'
+menu2 <- rbind(drinks.oz,drinks.ml)
+menu2$Type <- rep("drinks.ml", nrow(menu2))
+food.g$Type <- rep("food.g", nrow(food.g))
+menu2 <- rbind(menu2,food.g)
+
+```
+
+
+## Section 2: Exploring distribution of calories accross different menu items, food categories and serving sizes
+
+
+```{r}
+#Barchart - distribution of food categories
+options(repr.plot.height=3, repr.plot.width=6)
+ggplot(menu2) +
+  geom_bar(aes(x = reorder(Category, table(Category)[Category])), fill = "lightblue") +
+  coord_flip() +
+  theme_tufte(ticks=F) +
+  labs(x = NULL)
+
+```
+**Figure 1. Bar chat with distribution of food categories in the menu. Coffee & Tea is clearly a dominant category in terms of available menu options.**
+
+```{r}
+#Histogram - exploring calories, change binwidth and scale
+options(repr.plot.height=3, repr.plot.width=6)
+ggplot(menu2, aes(x = Calories)) +
+  geom_histogram(aes(y = ..density..), fill = "yellow", binwidth = 40, color="gray") + 
+  geom_density() +
+  scale_x_continuous(breaks = seq(min(menu$Calories), max(menu$Calories), by = 200)) +
+  theme_pander()
+
+```
+**Figure 2. Histogram with density line shows distribution of Caloric values. Density of Caloric values distribution peaks around 300.**
+
+```{r}
+#Conditional density estimate - calories by category
+options(repr.plot.height=4, repr.plot.width=6)
+ggplot(menu2, aes(x = Calories, fill = Category)) +
+  geom_density(position = "fill") +
+  scale_fill_brewer() +
+  theme_pander() +
+  labs(fill="")
+
+```
+**Figure 3. Density plot to see conditional density estimate of Calories in each Category of food. Difficult to read, even after changing the colour scale.**
+
+```{r}
+#Smooth density estimate (faceted) - calories by category
+options(repr.plot.height=4, repr.plot.width=6)
+ggplot(menu2, aes(x = Calories)) + 
+  geom_density(fill="lightblue") +
+  facet_wrap( ~ Category) +
+  geom_vline(aes(xintercept = median(Calories)), linetype = 2) +
+  theme_pander(base_size=8)
+
+```
+**Figure 4. Faceted smooth density estimates of Calories in each Category of food. Vertical dashed line shows median calories across categories. Much better to read, clearly visible wide spread of caloric values in Smoothies & Shakes, and high density of caloric values above the median in Beef & Pork, Breakfast, and Chicken & Fish categories.**
+
+```{r}
+#Boxplot - calories by category
+options(repr.plot.height=3, repr.plot.width=6)
+ggplot(menu2, aes(x = reorder(Category, Calories), y = Calories)) +
+  geom_boxplot() +
+  coord_flip() +
+  theme_pander() +
+  labs(x = NULL)
+
+```
+**Figure 5. Box plot of Caloric distribution in each Category of food. As already suspected from density plots above, the top caloric-heavy food Categories, with medians around 500 calories, are: (a) Chicken & Fish, (b) Smoothies & Shakes, (c) Breakfast, (d) Beef & Pork. We now see a monster-caloric outlier in the Chicken & Fish category in the box plot. Maybe error in the data? Lets explore it.**
+
+```{r}
+options(repr.plot.height=4, repr.plot.width=6)
+menu2 %>%
+  filter(.,Category=="Chicken & Fish") %>%
+  ggplot(aes(x = reorder(Item, Calories), y = Calories)) +
+  geom_bar(aes(fill=Calories<600), width=0.5, stat = "identity") +
+  coord_flip() +
+  theme_pander(base_size = 10) +
+  theme(legend.position="none") +
+  labs(x = NULL)
+
+```
+**Figure 6. Bar chart of Caloric values for specific menu Items from Chicken & Fish food category. The red bars highlight items equal or above 600 calories. We can now see that a massive outlier we saw in this category is not an error. It is a 40 piece Chicken McNuggets bucket - a stunning 1880 calories (1060 from fat)!**
+
+```{r}
+options(repr.plot.height=4, repr.plot.width=6)
+ggplot(menu2, aes(y = Calories, x = Serving.Size)) +
+  geom_jitter(size=0.5) +
+  stat_density2d() +
+  geom_smooth(method='lm', se=F, colour=1) +
+  facet_wrap( ~ Type, scales = "free_x") +
+  theme_pander() +
+  theme(panel.border = element_rect(colour = 1, fill=NA))
+```
+**Figure 7. Scatter plots of Calories and Serving Size, faceted by Type of menu food. Regression line shows a clear and expected linear increase in Calories with Serving Size, but no such clear effect is visible for drinks. Two-dimensional density estimation clearly shows a larger variance of serving size values in serving sizes. Note: remember we're looking a slightly measure scale for drinks (ml) and food (grams).**
+
+```{r}
+options(repr.plot.height=4, repr.plot.width=6)
+ggplot(menu2, aes(x = Calories, y = log(Serving.Size), colour=Type)) +
+  stat_density2d() +
+  theme_tufte(base_family="Helvetica")
+
+```
+**Figure 8. Two-dimensional density estimation plot of Calories by Serving Size with colour indicating drinks or solid food. This time we used logarithmic scale for Serving Size. Solid food has higher density of caloric values around higher caloric levels than drinks, but drinks have a huge spread of caloric values.**
+
+```{r}
+options(repr.plot.height=6, repr.plot.width=6)
+ggplot(menu2, aes(x = Calories, y = Serving.Size, colour=Type)) +
+  stat_density2d() +
+  facet_wrap( ~ Category) +
+  theme_tufte(base_family="Helvetica") +
+  theme(panel.border = element_rect(colour = "black", fill=NA), legend.position="top")
+
+```
+**Figure 9. Two-dimensional density estimation plot of Calories by Serving Size with colour indicating drinks or solid food, faceted across food Categories.**
+
+
+# Section 3: Exploring distribution of nutritional values accross different food categories and serving sizes
+
+
+In this section we only explore the % of Daily Values (DV) for all the Nutrition. Each nutritional category is distinctively different from other so its difficult to compare absolute values for each Item (i.e 20 grams of fat doesn't compare well to 20 grams of sodium). Therefore, the use of % of daily value gives it more 'common ground' scale.
+
+
+```{r}
+options(repr.plot.height=4, repr.plot.width=7)
+menu2 %>%
+  gather(Nutrition, Value, Total.Fat:Iron.DV, factor_key=TRUE) %>%
+  filter(grepl("DV", Nutrition)) %>%
+  ggplot(aes(x = Value)) +
+  geom_histogram(aes(y = ..density..), fill = "yellow", color="darkgray") +
+  facet_wrap( ~ Nutrition, nrow=2) +
+  xlim(0, 100) + ylim(0, 0.075) +
+  geom_vline(xintercept = 50, linetype = 2) +
+  theme_pander(base_size = 8)
+```
+**Figure 10. Histogram of % daily value distribution for each nutrition category. For the moment we only look at the distribution for up to 100% of daily value. Dashed line represents 50% of daily value - which is quite high when it comes only from a single menu item. Majority of nutritional value distribution falls under 50% of daily value. However, there is a lot of items that provide more than 50% of daily Saturated Fat and Sodium. Lets look where those nutritional values are coming from in terms of food category. Note: for better visual clarity on the focus area in this histogram, we remove all values above 100%.**
+
+```{r}
+options(repr.plot.height=3, repr.plot.width=6)
+menu2 %>%
+  gather(Nutrition, Value, Total.Fat:Iron.DV, factor_key=TRUE) %>%
+  filter(grepl("DV", Nutrition)) %>%
+  ggplot(aes(reorder(Nutrition, Value), Value)) +
+  geom_boxplot()+
+  coord_flip() +
+  theme_pander(base_size =10) +
+  geom_hline(yintercept = 50, linetype=2) +
+  annotate("text", label = "50% of daily value", y = 55, x = 1.5, size=4, hjust=0) +
+  labs(x = NULL, fill="")
+
+```
+**Figure 11. Box plots of % daily value distribution for each nutrition category. Dashed line represents 50% of daily value. Confirming intuition form histograms, medians of % of daily values for saturated and total fat are the highest, followed by calcium and sodium. There is also a some items on the menu that clearly provide more than 100% of daily nutritional value. Lets look at how this distribution looks across food categories.**
+
+```{r}
+options(repr.plot.height=4, repr.plot.width=7)
+menu2 %>%
+  gather(Nutrition, Value, Total.Fat:Iron.DV, factor_key=TRUE) %>%
+  filter(grepl("DV", Nutrition)) %>%
+  ggplot(aes(x = reorder(Category, Value), y = Value)) +
+  geom_point(aes(colour=Value>=50), shape = "|", size=3) +
+  geom_hline(yintercept = 50, linetype = 2) +
+  facet_wrap(~ Nutrition, nrow=2) +
+  coord_flip() +
+  theme_pander(base_size=9) +
+  theme(panel.border = element_rect(colour = 1, fill=NA), legend.position="none") +
+  scale_colour_manual(name="", values = c("TRUE"="red", "FALSE"="black")) +
+  labs(x = NULL)
+
+```
+**Figure 12. Barcode plots showing distribution of specific nutritional values in different food categories. Dashed line represents 50% of daily value. Red bars highlight values equal or higher than 50% of daily values. A lot of food rich with Saturated Fat comes from breakfasts, beef & pork, smoothies &shakes, as well as coffee & tea menus. There is also a lot of daily value for sodium in breakfasts and chicken & fish. On the bright side - some items have exceptionally high level of daily value in Vitamin A and C, sometimes over 150% of daily value. What are those specific 'healthy' items, and what other nutritional value they have?**
+
+```{r}
+options(repr.plot.height=5, repr.plot.width=7)
+menu2 %>%
+  filter(Vitamin.A.DV > 50 | Vitamin.C.DV > 50) %>%
+  gather(Nutrition, Value, Total.Fat:Iron.DV, factor_key=TRUE) %>%
+  filter(grepl("DV", Nutrition)) %>%
+  ggplot(aes(x = reorder(Item, Value), y = Value, fill=Value<=50)) +
+  geom_bar(width=0.5, stat = "identity") +
+  geom_hline(yintercept = 50, linetype = 2) +
+  facet_wrap(~ Nutrition, nrow=2) +
+  coord_flip() +
+  theme_pander(base_size = 7) +
+  theme(panel.border = element_rect(colour = "black", fill=NA), legend.position="none") +
+  labs(x = NULL)
+
+```
+**Figure 13. Bar charts for nutritional values for selected items that provides over 50% of daily Vitamin C or D content (marked by dashed line). We also highlight (red bars) all other values with any nutritional content above 50%. Minute maid orange juices are the winners providing between around 100-250% of daily value of Vitamin C depending on the size. The surprise are Large French Fries which provide around 60% of Vitamin C. For Vitamin A the leading item are Premium Southwest Salads, providing close to 170% of daily value. However, when Premium Southwest Salads contain chicken or other meat you easily get over 50% of daily sodium from such single item.**
+
+```{r}
+options(repr.plot.height=5, repr.plot.width=7)
+menu2 %>%
+  filter(Cholesterol.DV > 50) %>%
+  gather(Nutrition, Value, Total.Fat:Iron.DV, factor_key=TRUE) %>%
+  filter(grepl("DV", Nutrition)) %>%
+  ggplot(aes(x = reorder(Item, Value), y = Value, fill=Value<=50)) +
+  geom_bar(width=0.5, stat = "identity") +
+  geom_hline(yintercept = 50, linetype = 2) +
+  facet_wrap(~ Nutrition, nrow=2) +
+  coord_flip() +
+  theme_pander(base_size = 7) +
+  theme(panel.border = element_rect(colour = "black", fill=NA)) +
+  theme(legend.position="none") +
+  labs(x = NULL)
+
+```
+**Figure 14. Bar charts for nutritional values for selected items that provides over 50% of daily Cholesterol content (marked by dashed line). Big Breakfast are the killers - from each of them you get almost 200% of daily value of cholesterol.**
+
+```{r}
+options(repr.plot.height=5, repr.plot.width=7)
+menu2 %>%
+  gather(Nutrition, Value, Total.Fat:Iron.DV, factor_key=TRUE) %>%
+  filter(grepl("DV", Nutrition)) %>%
+  ggplot(aes(reorder(Nutrition, Value), Value)) +
+  geom_point(aes(colour=Value<=50), shape = "|", size=3) +
+  coord_flip() +
+  geom_hline(yintercept = 50, linetype=2) + 
+  facet_wrap(~Category) +
+  theme_pander(base_size=9) +
+  theme(panel.border = element_rect(colour = "black", fill=NA), legend.position="none") +
+  labs(x = NULL)
+
+```
+**Figure 15. Barcode plots showing distribution of specific nutritional values, faceted by different food categories. Red Bars highlight values above 50%. Confirms very large content of Saturated Fat, Total Fat, Sodium and Cholesterol in Breakfast category - possibly the most unhealthy on this menu if we consider health risks of high saturated fat, cholesterol and sodium consumption**
+
+```{r}
+options(repr.plot.height=5, repr.plot.width=7)
+menu2 %>%
+  gather(Nutrition, Value, Total.Fat:Iron.DV, factor_key=TRUE) %>%
+  filter(grepl("DV", Nutrition)) %>%
+  ggplot(aes(Serving.Size, Value, color=Type)) +
+  geom_point(shape = "+", size=3) +
+  geom_smooth(method = "lm", se=F) +
+  stat_ellipse(type = "norm") +
+  geom_vline(xintercept = 100, linetype=2) + 
+  facet_wrap(~ Nutrition, nrow=2) +
+  theme_pander(base_size=10) +
+  theme(panel.border = element_rect(colour = "black", fill=NA), legend.position="top")
+
+```
+**Figure 16. Scatter plot showing relationship between serving size and nutritional content coloured by food type. Plotted with with normal confidence ellipses (type = "norm" - multivariate normal distribution), regression lines, and dashed line representing 100% daily value.**
+
+```{r}
+#Explore relationship between cholesterol value and all other nutritional values
+options(repr.plot.height=5, repr.plot.width=7)
+menu2 %>%
+  gather(Nutrition, Value, Total.Fat:Iron.DV, -Cholesterol, -Cholesterol.DV, factor_key=TRUE) %>%
+  filter(grepl("DV", Nutrition)) %>%
+  ggplot(aes(x = Cholesterol.DV, y = Value)) +
+  geom_point(size = 0.2, color="darkgray") +
+  geom_smooth(colour=1, method = "lm", se=F) +
+  facet_wrap( ~ Nutrition, scales = "free_y") +
+  theme_tufte(base_family="Helvetica")
+
+```
+**Figure 17. Scatter plots showing relationship between cholesterol and other specific nutritional values in different food categories, plotted with regression line. Interesting relationship between level of cholesterol and iron.**
